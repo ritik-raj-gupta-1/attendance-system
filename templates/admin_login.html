@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>AIH Class Attendance</h1>
+        <div id="alert-box" class="alert" style="display:none;"></div>
+        <div id="admin-login-form">
+            <h2>Admin Login</h2>
+            <form onsubmit="handleAdminLogin(event)">
+                <input type="text" id="admin-identifier" placeholder="Username" required>
+                <input type="password" id="admin-password" placeholder="Password" required>
+                <button type="submit">Login</button>
+            </form>
+        </div>
+    </div>
+    <footer>Crafted by ऋतिक</footer>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

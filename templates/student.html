@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body onload="initStudentDashboard()">
+    <div class="container">
+        <div class="header">
+            <h2>Welcome, {{ name }}</h2>
+            <a href="/logout" class="logout-btn">Logout</a>
+        </div>
+        <div id="alert-box" class="alert" style="display:none;"></div>
+        <div class="grid-container">
+            <div class="card">
+                <h3>Mark Attendance</h3>
+                <div id="session-timer" class="timer"></div>
+                <button id="mark-attendance-btn" onclick="markAttendance()" disabled>Session is not active</button>
+            </div>
+            <div class="card">
+                <h3>My Stats</h3>
+                <p><strong>Total Sessions Attended:</strong> <span id="days-present">0</span></p>
+                <p><strong>Total Sessions Held:</strong> <span id="total-sessions">0</span></p>
+                <p><strong>Percentage:</strong> <span id="percentage">0%</span></p>
+                <hr>
+                <button onclick="requestReRegistration()">Request Device Change</button>
+            </div>
+            <div class="card">
+                <h3>Live: Present Today (Latest Session)</h3>
+                <ul id="present-list-today"><li>No session today.</li></ul>
+            </div>
+        </div>
+    </div>
+    <footer>Crafted by ऋतिक</footer>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

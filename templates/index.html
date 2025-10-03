@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIH Class Attendance</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>AIH Class Attendance</h1>
+        <div id="alert-box" class="alert" style="display:none;"></div>
+        <div id="login-form">
+            <h2>Student Login</h2>
+            <form onsubmit="handleStudentLogin(event)">
+                <input type="text" id="login-identifier" placeholder="Enrollment No." required>
+                <input type="password" id="login-password" placeholder="Password" required>
+                <button type="submit">Login</button>
+            </form>
+            <p>New Student? <a href="#" onclick="toggleForms()">Register here</a></p>
+        </div>
+        <div id="register-form" style="display:none;">
+            <h2>Student Registration</h2>
+            <p>One-time registration to link your device.</p>
+            <form onsubmit="handleRegister(event)">
+                <input type="text" id="register-enrollment" placeholder="Enrollment Number" required>
+                <input type="password" id="register-password" placeholder="Choose a Password" required>
+                <button type="submit">Register Device</button>
+            </form>
+            <p>Already registered? <a href="#" onclick="toggleForms()">Login here</a></p>
+        </div>
+    </div>
+    <footer>Crafted by ऋतिक</footer>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

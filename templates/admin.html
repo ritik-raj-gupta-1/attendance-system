@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body onload="initAdminDashboard()">
+    <div class="container">
+        <div class="header">
+            <h2>Admin Dashboard</h2>
+            <a href="/logout" class="logout-btn">Logout</a>
+        </div>
+        <div id="alert-box" class="alert" style="display:none;"></div>
+        <div class="grid-container">
+            <div class="card">
+                <h3>Session Control</h3>
+                <div id="session-timer" class="timer"></div>
+                <button id="start-session-btn" onclick="startAttendanceSession()">Start 5-Min Attendance Session</button>
+                <button id="end-session-btn" onclick="endAttendanceSession()" style="display:none;" class="danger-btn">End Session Now</button>
+            </div>
+            <div class="card">
+                <h3>Re-registration Requests</h3>
+                <div id="requests-list"><p>Loading requests...</p></div>
+            </div>
+            <div class="card">
+                <h3>Reports</h3>
+                <a href="/api/admin/generate_csv" class="button-link">Download Attendance Report (CSV)</a>
+            </div>
+        </div>
+        <div class="card full-width">
+            <h3>Latest Session Attendance</h3>
+            <div id="today-attendance-list"><p>No session started for today.</p></div>
+        </div>
+    </div>
+    <footer>Crafted by ऋतिक</footer>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
