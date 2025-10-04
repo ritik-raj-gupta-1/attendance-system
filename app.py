@@ -1,13 +1,12 @@
 import os
 import psycopg2
 from psycopg2.extras import DictCursor
+from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session, Response
-from datetime import datetime, timedelta
 from geopy.distance import geodesic
 import io
 import csv
 
-# --- APP CONFIGURATION ---
 app = Flask(__name__)
 app.secret_key = 'your_very_secret_key_change_this'
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -67,7 +66,6 @@ def student_login():
     
     return jsonify({'success': False, 'message': 'Invalid credentials, not registered, or device not recognized.'})
 
-
 @app.route('/api/admin_login', methods=['POST'])
 def admin_login():
     data = request.json
@@ -93,8 +91,7 @@ def register():
     conn = get_db_connection()
     with conn.cursor() as cursor:
         cursor.execute('SELECT * FROM students WHERE device_id = %s', (device_id,))
-        existing_device = cursor.fetchone()
-        if existing_device:
+        if cursor.fetchone():
             conn.close()
             return jsonify({'success': False, 'message': 'This device is already linked to another account.'})
         
@@ -113,16 +110,20 @@ def register():
 @app.route('/api/get_active_session')
 def get_active_session():
     conn = get_db_connection()
-    now = datetime.now()
+    now_utc = datetime.now(timezone.utc)
     with conn.cursor() as cursor:
         cursor.execute(
             "SELECT * FROM attendance_sessions WHERE %s BETWEEN start_time AND end_time ORDER BY start_time DESC LIMIT 1",
-            (now,)
+            (now_utc,)
         )
         active_session = cursor.fetchone()
     conn.close()
+
     if active_session:
-        return jsonify({'is_active': True, 'end_time': active_session['end_time'].isoformat()})
+        end_time = active_session['end_time']
+        remaining_delta = end_time - now_utc
+        remaining_seconds = max(0, remaining_delta.total_seconds())
+        return jsonify({'is_active': True, 'remaining_seconds': remaining_seconds})
     else:
         return jsonify({'is_active': False})
 
@@ -132,20 +133,20 @@ def start_session():
     if session.get('user_type') != 'admin': return jsonify({'success': False, 'message': 'Unauthorized'}), 401
     conn = get_db_connection()
     with conn.cursor() as cursor:
-        now = datetime.now()
-        cursor.execute("SELECT id FROM attendance_sessions WHERE %s BETWEEN start_time AND end_time", (now,))
+        now_utc = datetime.now(timezone.utc)
+        cursor.execute("SELECT id FROM attendance_sessions WHERE %s BETWEEN start_time AND end_time", (now_utc,))
         if cursor.fetchone():
             conn.close()
             return jsonify({'success': False, 'message': 'Another session is already in progress.'})
 
         data = request.json
         lat, lon = data.get('lat'), data.get('lon')
-        today, start_time = now.date(), now
+        start_time = now_utc
         end_time = start_time + timedelta(minutes=5)
         
         cursor.execute(
             'INSERT INTO attendance_sessions (session_date, start_time, end_time, admin_lat, admin_lon) VALUES (%s, %s, %s, %s, %s) RETURNING id',
-            (today, start_time, end_time, lat, lon)
+            (start_time.date(), start_time, end_time, lat, lon)
         )
         session_id = cursor.fetchone()['id']
         
@@ -163,14 +164,13 @@ def end_session():
     if session.get('user_type') != 'admin': return jsonify({'success': False, 'message': 'Unauthorized'}), 401
     conn = get_db_connection()
     with conn.cursor() as cursor:
-        now = datetime.now()
+        now_utc = datetime.now(timezone.utc)
         cursor.execute(
-            "SELECT id FROM attendance_sessions WHERE %s BETWEEN start_time AND end_time", (now,)
+            "SELECT id FROM attendance_sessions WHERE %s BETWEEN start_time AND end_time", (now_utc,)
         )
         active_session = cursor.fetchone()
-
         if active_session:
-            cursor.execute("UPDATE attendance_sessions SET end_time = %s WHERE id = %s", (now, active_session['id']))
+            cursor.execute("UPDATE attendance_sessions SET end_time = %s WHERE id = %s", (now_utc, active_session['id']))
             conn.commit()
             conn.close()
             return jsonify({'success': True, 'message': 'Session ended successfully.'})
@@ -184,7 +184,7 @@ def get_today_attendance():
     with conn.cursor() as cursor:
         cursor.execute(
             "SELECT * FROM attendance_sessions WHERE session_date = %s ORDER BY start_time DESC LIMIT 1",
-            (datetime.now().date(),)
+            (datetime.now(timezone.utc).date(),)
         )
         latest_session = cursor.fetchone()
         
@@ -241,25 +241,39 @@ def approve_request():
     conn.close()
     return jsonify({'success': True})
 
-@app.route('/api/admin/generate_csv')
+@app.route('/api/admin/generate_csv', methods=['POST'])
 def generate_csv():
     if session.get('user_type') != 'admin': return jsonify({'success': False, 'message': 'Unauthorized'}), 401
     conn = get_db_connection()
     with conn.cursor() as cursor:
-        cursor.execute('SELECT COUNT(id) FROM attendance_sessions')
-        total_sessions = cursor.fetchone()[0] or 1
-        cursor.execute('''
-            SELECT s.name, s.enrollment_number, COUNT(CASE WHEN ar.status = 'Present' THEN 1 END) as days_present
-            FROM students s LEFT JOIN attendance_records ar ON s.id = ar.student_id GROUP BY s.id ORDER BY s.name
-        ''')
-        report_data = cursor.fetchall()
+        cursor.execute('SELECT COUNT(DISTINCT session_date) FROM attendance_sessions')
+        total_working_days = cursor.fetchone()[0] or 1
+        
+        cursor.execute('SELECT id, name, enrollment_number FROM students ORDER BY name')
+        students = cursor.fetchall()
+
+        report_data = []
+        for student in students:
+            cursor.execute('''
+                SELECT COUNT(DISTINCT s.session_date)
+                FROM attendance_records AS r
+                JOIN attendance_sessions AS s ON r.session_id = s.id
+                WHERE r.student_id = %s AND r.status = 'Present'
+            ''', (student['id'],))
+            days_present = cursor.fetchone()[0]
+            report_data.append({
+                'name': student['name'],
+                'enrollment_number': student['enrollment_number'],
+                'days_present': days_present
+            })
     conn.close()
+    
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(['Name', 'Enrollment Number', 'Days Present', 'Total Sessions', 'Percentage'])
+    writer.writerow(['Name', 'Enrollment Number', 'Days Present', 'Total Working Days', 'Percentage'])
     for row in report_data:
-        percentage = (row['days_present'] / total_sessions) * 100
-        writer.writerow([row['name'], row['enrollment_number'], row['days_present'], total_sessions, f"{percentage:.2f}%"])
+        percentage = (row['days_present'] / total_working_days) * 100 if total_working_days > 0 else 0
+        writer.writerow([row['name'], row['enrollment_number'], row['days_present'], total_working_days, f"{percentage:.2f}%"])
     output.seek(0)
     return Response(output, mimetype="text/csv", headers={"Content-Disposition":"attachment;filename=attendance_report.csv"})
 
@@ -269,13 +283,18 @@ def get_student_status():
     if session.get('user_type') != 'student': return jsonify({'success': False, 'message': 'Unauthorized'}), 401
     conn = get_db_connection()
     with conn.cursor() as cursor:
-        cursor.execute('SELECT COUNT(id) FROM attendance_sessions')
-        total_sessions = cursor.fetchone()[0]
-        cursor.execute('SELECT COUNT(*) FROM attendance_records WHERE student_id = %s AND status = %s',
-                                    (session['user_id'], 'Present'))
+        cursor.execute('SELECT COUNT(DISTINCT session_date) FROM attendance_sessions')
+        total_working_days = cursor.fetchone()[0]
+
+        cursor.execute('''
+            SELECT COUNT(DISTINCT s.session_date)
+            FROM attendance_records AS r
+            JOIN attendance_sessions AS s ON r.session_id = s.id
+            WHERE r.student_id = %s AND r.status = 'Present'
+        ''', (session['user_id'],))
         days_present = cursor.fetchone()[0]
         
-        cursor.execute("SELECT id FROM attendance_sessions WHERE session_date = %s ORDER BY start_time DESC LIMIT 1", (datetime.now().date(),))
+        cursor.execute("SELECT id FROM attendance_sessions WHERE session_date = %s ORDER BY start_time DESC LIMIT 1", (datetime.now(timezone.utc).date(),))
         latest_session_today = cursor.fetchone()
         present_list = []
         if latest_session_today:
@@ -286,7 +305,7 @@ def get_student_status():
             present_students = cursor.fetchall()
             present_list = [row['name'] for row in present_students]
     conn.close()
-    return jsonify({'total_sessions': total_sessions, 'days_present': days_present, 'present_list_today': present_list})
+    return jsonify({'total_working_days': total_working_days, 'days_present': days_present, 'present_list_today': present_list})
 
 @app.route('/api/student/mark_attendance', methods=['POST'])
 def mark_attendance():
@@ -301,8 +320,8 @@ def mark_attendance():
             conn.close()
             return jsonify({'success': False, 'message': 'This is not your registered device.'})
 
-        now = datetime.now()
-        cursor.execute("SELECT * FROM attendance_sessions WHERE %s BETWEEN start_time AND end_time ORDER BY start_time DESC LIMIT 1", (now,))
+        now_utc = datetime.now(timezone.utc)
+        cursor.execute("SELECT * FROM attendance_sessions WHERE %s BETWEEN start_time AND end_time ORDER BY start_time DESC LIMIT 1", (now_utc,))
         active_session = cursor.fetchone()
         if not active_session:
             conn.close()
@@ -324,13 +343,10 @@ def request_reregistration():
     if session.get('user_type') != 'student': return jsonify({'success': False, 'message': 'Unauthorized'}), 401
     conn = get_db_connection()
     with conn.cursor() as cursor:
-        # Use ON CONFLICT DO NOTHING to prevent errors on duplicate requests
         cursor.execute('INSERT INTO reregistration_requests (student_id) VALUES (%s) ON CONFLICT (student_id) DO NOTHING', (session['user_id'],))
         conn.commit()
     conn.close()
     return jsonify({'success': True, 'message': 'Re-registration request sent to admin.'})
 
 if __name__ == '__main__':
-    # Use '0.0.0.0' to be accessible on your network. For Render, this isn't strictly necessary but is good practice.
-    # The port will be managed by Render automatically.
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))

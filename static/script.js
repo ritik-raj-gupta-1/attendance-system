@@ -79,27 +79,28 @@ async function handleRegister(event) {
 
 let countdownInterval;
 
-function startCountdown(endTime) {
+function startCountdown(remainingSeconds) {
     const timerElement = document.getElementById('session-timer');
     if (!timerElement) return;
 
     if (countdownInterval) clearInterval(countdownInterval);
 
-    const end = new Date(endTime.replace(' ', 'T')).getTime();
+    let duration = Math.round(remainingSeconds);
 
     countdownInterval = setInterval(() => {
-        const now = new Date().getTime();
-        const distance = end - now;
-
-        if (distance < 0) {
+        if (duration <= 0) {
             clearInterval(countdownInterval);
             timerElement.innerHTML = "Session Ended";
             checkSessionStatus();
             return;
         }
-        const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
-        const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+        const minutes = Math.floor(duration / 60);
+        const seconds = duration % 60;
+        
         timerElement.innerHTML = `Time Left: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        
+        duration--;
     }, 1000);
 }
 
@@ -127,7 +128,7 @@ async function checkSessionStatus() {
     }
 
     if (data.is_active) {
-        startCountdown(data.end_time);
+        startCountdown(data.remaining_seconds);
     } else {
         stopCountdown();
     }
@@ -245,8 +246,8 @@ async function updateStudentStats() {
     const response = await fetch(`${API_BASE}/api/student/get_status`);
     const data = await response.json();
     document.getElementById('days-present').textContent = data.days_present;
-    document.getElementById('total-sessions').textContent = data.total_sessions;
-    const percentage = data.total_sessions > 0 ? ((data.days_present / data.total_sessions) * 100).toFixed(2) : 0;
+    document.getElementById('total-working-days').textContent = data.total_working_days;
+    const percentage = data.total_working_days > 0 ? ((data.days_present / data.total_working_days) * 100).toFixed(2) : 0;
     document.getElementById('percentage').textContent = `${percentage}%`;
     const presentList = document.getElementById('present-list-today');
     presentList.innerHTML = data.present_list_today.length > 0
