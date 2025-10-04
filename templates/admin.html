@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
+    <meta charset="UTF--8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
@@ -31,7 +31,12 @@
         </div>
         <div class="card full-width">
             <h3>Latest Session Attendance</h3>
-            <div id="today-attendance-list"><p>No session started for today.</p></div>
+            
+            <input type="text" id="student-search" onkeyup="searchStudents()" placeholder="Search by name or enrollment no...">
+            
+            <div id="today-attendance-list">
+                <p class="loading-text">Loading attendance data...</p>
+            </div>
         </div>
     </div>
     <footer>Crafted by ऋतिक</footer>

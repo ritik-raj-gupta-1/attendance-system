@@ -56,6 +56,20 @@ button:disabled { background-color: #ccc; cursor: not-allowed; }
 .danger-btn:hover {
     background-color: #c0392b;
 }
+
+/* ADDED: Styles for search bar and loading text */
+#student-search {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 15px;
+    font-size: 1rem;
+}
+.loading-text {
+    text-align: center;
+    color: #888;
+    padding: 20px;
+}
+
 footer {
     text-align: center; padding: 20px; margin-top: 20px;
     font-size: 1.1rem; font-weight: bold; color: var(--footer-red);

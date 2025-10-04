@@ -94,12 +94,9 @@ function startCountdown(remainingSeconds) {
             checkSessionStatus();
             return;
         }
-
         const minutes = Math.floor(duration / 60);
         const seconds = duration % 60;
-        
         timerElement.innerHTML = `Time Left: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-        
         duration--;
     }, 1000);
 }
@@ -182,21 +179,31 @@ async function endAttendanceSession() {
 }
 
 async function fetchTodayAttendance() {
+    const listDiv = document.getElementById('today-attendance-list');
+    // MODIFIED: Show loading text
+    listDiv.innerHTML = '<p class="loading-text">Loading attendance data...</p>';
+
     const response = await fetch(`${API_BASE}/api/admin/get_today_attendance`);
     const data = await response.json();
-    const listDiv = document.getElementById('today-attendance-list');
+    
     if (data.length === 0) {
         listDiv.innerHTML = '<p>No session started for today.</p>';
         return;
     }
-    listDiv.innerHTML = data.map(student => `
-        <div class="list-item">
-            <span>${student.name} (${student.enrollment_number})</span>
+
+    // MODIFIED: Render the list after clearing loading text
+    listDiv.innerHTML = ''; 
+    data.forEach(student => {
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'list-item';
+        itemDiv.innerHTML = `
+            <span class="student-info">${student.name} (${student.enrollment_number})</span>
             <span class="status-toggle ${student.status}" onclick="toggleStatus(${student.record_id}, '${student.status}')">
                 ${student.status}
             </span>
-        </div>
-    `).join('');
+        `;
+        listDiv.appendChild(itemDiv);
+    });
 }
 
 async function toggleStatus(record_id, current_status) {
@@ -234,6 +241,25 @@ async function approveRequest(request_id) {
     showAlert('Request approved. Student can register a new device.', 'success');
     fetchRequests();
 }
+
+// ADDED: New function to handle searching/filtering
+function searchStudents() {
+    const input = document.getElementById('student-search');
+    const filter = input.value.toUpperCase();
+    const list = document.getElementById('today-attendance-list');
+    const items = list.getElementsByClassName('list-item');
+
+    for (let i = 0; i < items.length; i++) {
+        const studentInfo = items[i].getElementsByClassName("student-info")[0];
+        const txtValue = studentInfo.textContent || studentInfo.innerText;
+        if (txtValue.toUpperCase().indexOf(filter) > -1) {
+            items[i].style.display = "flex";
+        } else {
+            items[i].style.display = "none";
+        }
+    }
+}
+
 
 function initStudentDashboard() {
     checkSessionStatus();
