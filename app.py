@@ -9,7 +9,6 @@ import csv
 from whitenoise import WhiteNoise
 from flask_sqlalchemy import SQLAlchemy
 from flask_session import Session
-from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.wsgi_app = WhiteNoise(app.wsgi_app, root='static/')
@@ -23,22 +22,19 @@ app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'a-default-secret-key-f
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SESSION_TYPE'] = 'sqlalchemy'
-# These two lines are important for deployment on services like Heroku/Render
 app.config['SESSION_COOKIE_SECURE'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' # Changed to Lax for broader compatibility
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 db = SQLAlchemy(app)
 app.config['SESSION_SQLALCHEMY'] = db
 sess = Session(app)
 
-# **FIX:** Create the 'sessions' table that Flask-Session needs
 with app.app_context():
     db.create_all()
 
 # --- Database Connection Helper (for raw queries) ---
 DATABASE_URL_ORIGINAL = os.getenv('DATABASE_URL')
 def get_db_connection():
-    """Establishes a new database connection."""
     conn = psycopg2.connect(DATABASE_URL_ORIGINAL, cursor_factory=DictCursor)
     return conn
 
@@ -85,7 +81,8 @@ def student_login():
             cursor.execute('SELECT * FROM students WHERE enrollment_number = %s', (identifier,))
             student = cursor.fetchone()
     
-    if student and student['password'] and check_password_hash(student['password'], password):
+    # Plain text password check
+    if student and student['password'] and student['password'] == password:
         session['user_id'] = student['id']
         session['enrollment_number'] = student['enrollment_number']
         session['name'] = student['name']
@@ -104,7 +101,8 @@ def admin_login():
             cursor.execute('SELECT * FROM admins WHERE username = %s', (identifier,))
             admin = cursor.fetchone()
 
-    if admin and check_password_hash(admin['password'], password):
+    # Plain text password check
+    if admin and admin['password'] == password:
         session['user_id'] = admin['id']
         session['username'] = admin['username']
         session['user_type'] = 'admin'
@@ -116,8 +114,7 @@ def admin_login():
 def register():
     data = request.json
     enrollment_number, password, device_id = data.get('enrollment_number'), data.get('password'), data.get('device_id')
-    hashed_password = generate_password_hash(password)
-
+    
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute('SELECT * FROM students WHERE device_id = %s', (device_id,))
@@ -127,13 +124,15 @@ def register():
             cursor.execute('SELECT * FROM students WHERE enrollment_number = %s', (enrollment_number,))
             student = cursor.fetchone()
             if student and not student['password']:
+                # Storing plain text password
                 cursor.execute('UPDATE students SET password = %s, device_id = %s WHERE enrollment_number = %s', 
-                             (hashed_password, device_id, enrollment_number))
+                             (password, device_id, enrollment_number))
                 conn.commit()
                 return jsonify({'success': True, 'message': 'Registration successful!'})
             
     return jsonify({'success': False, 'message': 'Already registered or invalid enrollment number.'})
 
+# --- (The rest of the app.py file remains the same) ---
 @app.route('/api/get_active_session')
 def get_active_session():
     now_utc = datetime.now(timezone.utc)
@@ -152,8 +151,6 @@ def get_active_session():
         return jsonify({'is_active': True, 'remaining_seconds': remaining_seconds})
     else:
         return jsonify({'is_active': False})
-
-# --- ADMIN API Routes ---
 
 def is_admin():
     return 'user_type' in session and session['user_type'] == 'admin'
@@ -311,8 +308,6 @@ def generate_csv():
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment;filename=attendance_report.csv"}
     )
-
-# --- STUDENT API Routes ---
 
 def is_student():
     return 'user_type' in session and session['user_type'] == 'student'

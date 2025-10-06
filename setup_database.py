@@ -1,14 +1,13 @@
 import os
 import psycopg2
 from psycopg2.extras import DictCursor, execute_values
-from werkzeug.security import generate_password_hash
 
 # IMPORTANT: Make sure the DATABASE_URL environment variable is set.
 DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
     raise ValueError("No DATABASE_URL set for Flask application")
 
-# Data remains the same...
+# Student data remains the same...
 STUDENT_DATA = [
     ('Y24120001', 'ANSHUL TAMRAKAR', 'BA'), ('Y24120002', 'KHUSHVEER SINGH SURYAVANSHI', 'BA'),
     ('Y24120003', 'SHREYASHI JAIN', 'BA'), ('Y24120004', 'AAKASH ROHIT', 'BA'),
@@ -147,9 +146,8 @@ def setup_database():
             
             print("Tables created successfully.")
             
-            # Insert default admin user with a HASHED password
-            hashed_password = generate_password_hash('password')
-            cursor.execute("INSERT INTO admins (username, password) VALUES (%s, %s)", ('admin', hashed_password))
+            # Insert default admin user with a PLAIN TEXT password
+            cursor.execute("INSERT INTO admins (username, password) VALUES (%s, %s)", ('admin', 'password'))
             print("Default admin created (username: admin, password: password)")
             
             # Insert student data
