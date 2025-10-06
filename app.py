@@ -6,8 +6,13 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for, s
 from geopy.distance import geodesic
 import io
 import csv
+# Import WhiteNoise
+from whitenoise import WhiteNoise
 
 app = Flask(__name__)
+# Add this line to wrap your app with WhiteNoise
+app.wsgi_app = WhiteNoise(app.wsgi_app, root='static/')
+
 
 # These settings are important for deployment (e.g., on Render)
 app.config['SESSION_COOKIE_SECURE'] = True
