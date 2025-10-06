@@ -26,6 +26,8 @@ function toggleForms() {
 
 async function handleStudentLogin(event) {
     event.preventDefault();
+    const loginButton = event.target.querySelector('button');
+    loginButton.disabled = true;
     const identifier = document.getElementById('login-identifier').value;
     const password = document.getElementById('login-password').value;
     try {
@@ -42,11 +44,15 @@ async function handleStudentLogin(event) {
         }
     } catch (error) {
         showAlert('Could not connect to the server.');
+    } finally {
+        loginButton.disabled = false;
     }
 }
 
 async function handleAdminLogin(event) {
     event.preventDefault();
+    const loginButton = event.target.querySelector('button');
+    loginButton.disabled = true;
     const identifier = document.getElementById('admin-identifier').value;
     const password = document.getElementById('admin-password').value;
     try {
@@ -63,11 +69,15 @@ async function handleAdminLogin(event) {
         }
     } catch (error) {
         showAlert('Could not connect to the server.');
+    } finally {
+        loginButton.disabled = false;
     }
 }
 
 async function handleRegister(event) {
     event.preventDefault();
+    const registerButton = event.target.querySelector('button');
+    registerButton.disabled = true;
     const enrollment_number = document.getElementById('register-enrollment').value;
     const password = document.getElementById('register-password').value;
     const device_id = getDeviceId();
@@ -86,6 +96,8 @@ async function handleRegister(event) {
         }
     } catch (error) {
         showAlert('Could not connect to the server.');
+    } finally {
+        registerButton.disabled = false;
     }
 }
 
@@ -128,8 +140,11 @@ async function checkSessionStatus() {
         
         const markBtn = document.getElementById('mark-attendance-btn');
         if (markBtn) {
-            markBtn.disabled = !data.is_active;
-            markBtn.textContent = data.is_active ? 'Mark My Attendance' : 'Session is not active';
+            // Keep it disabled if it says "Marked!"
+            if (markBtn.textContent !== 'Marked!') {
+                markBtn.disabled = !data.is_active;
+                markBtn.textContent = data.is_active ? 'Mark My Attendance' : 'Session is not active';
+            }
         }
         
         const startBtn = document.getElementById('start-session-btn');
@@ -156,8 +171,8 @@ function initAdminDashboard() {
     fetchTodayAttendance();
     fetchRequests();
     setInterval(checkSessionStatus, 5000);
-    setInterval(fetchTodayAttendance, 30000); // Refresh attendance list
-    setInterval(fetchRequests, 60000); // Refresh requests list
+    setInterval(fetchTodayAttendance, 30000);
+    setInterval(fetchRequests, 60000);
 }
 
 async function startAttendanceSession() {
@@ -213,7 +228,6 @@ async function endAttendanceSession() {
 
 async function fetchTodayAttendance() {
     const listDiv = document.getElementById('today-attendance-list');
-    
     try {
         const response = await fetch(`${API_BASE}/api/admin/get_today_attendance`);
         if (!response.ok) {
@@ -245,14 +259,12 @@ async function fetchTodayAttendance() {
             `;
             listDiv.appendChild(itemDiv);
         });
-        // After rendering, re-apply search filter if any
         searchStudents();
     } catch (error) {
         listDiv.innerHTML = '<p class="loading-text">Error fetching attendance. Please check connection.</p>';
         console.error("Error fetching attendance:", error);
     }
 }
-
 
 async function toggleStatus(record_id, current_status) {
     const new_status = current_status === 'Present' ? 'Absent' : 'Present';
@@ -386,6 +398,7 @@ function markAttendance() {
             showAlert(data.message, data.success ? 'success' : 'error');
             if (data.success) {
                 markBtn.textContent = 'Marked!';
+                // Button remains disabled after successful marking
                 await updateStudentStats();
             } else {
                 markBtn.disabled = false;

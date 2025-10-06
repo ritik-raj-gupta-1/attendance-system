@@ -1,12 +1,14 @@
 import os
 import psycopg2
-from psycopg2.extras import DictCursor
+from psycopg2.extras import DictCursor, execute_values
+from werkzeug.security import generate_password_hash
 
 # IMPORTANT: Make sure the DATABASE_URL environment variable is set.
 DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
     raise ValueError("No DATABASE_URL set for Flask application")
 
+# Data remains the same...
 STUDENT_DATA = [
     ('Y24120001', 'ANSHUL TAMRAKAR', 'BA'), ('Y24120002', 'KHUSHVEER SINGH SURYAVANSHI', 'BA'),
     ('Y24120003', 'SHREYASHI JAIN', 'BA'), ('Y24120004', 'AAKASH ROHIT', 'BA'),
@@ -88,78 +90,76 @@ STUDENT_DATA = [
 def setup_database():
     """Connects to the PostgreSQL database and sets up all tables."""
     conn = psycopg2.connect(DATABASE_URL)
-    with conn.cursor() as cursor:
-        print("Dropping existing tables...")
-        # Drop tables in reverse order of creation due to foreign key constraints
-        cursor.execute("DROP TABLE IF EXISTS reregistration_requests CASCADE;")
-        cursor.execute("DROP TABLE IF EXISTS attendance_records CASCADE;")
-        cursor.execute("DROP TABLE IF EXISTS attendance_sessions CASCADE;")
-        cursor.execute("DROP TABLE IF EXISTS students CASCADE;")
-        cursor.execute("DROP TABLE IF EXISTS admins CASCADE;")
+    with conn:
+        with conn.cursor() as cursor:
+            print("Dropping existing tables...")
+            cursor.execute("DROP TABLE IF EXISTS sessions CASCADE;")
+            cursor.execute("DROP TABLE IF EXISTS reregistration_requests CASCADE;")
+            cursor.execute("DROP TABLE IF EXISTS attendance_records CASCADE;")
+            cursor.execute("DROP TABLE IF EXISTS attendance_sessions CASCADE;")
+            cursor.execute("DROP TABLE IF EXISTS students CASCADE;")
+            cursor.execute("DROP TABLE IF EXISTS admins CASCADE;")
 
-        print("Creating tables...")
-        # Using TIMESTAMPTZ for timezone-aware timestamps, recommended for web apps
-        cursor.execute("""
-        CREATE TABLE admins (
-            id SERIAL PRIMARY KEY,
-            username TEXT NOT NULL UNIQUE,
-            password TEXT NOT NULL
-        );""")
+            print("Creating tables...")
+            cursor.execute("""
+            CREATE TABLE admins (
+                id SERIAL PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password TEXT NOT NULL
+            );""")
 
-        cursor.execute("""
-        CREATE TABLE students (
-            id SERIAL PRIMARY KEY,
-            enrollment_number TEXT NOT NULL UNIQUE,
-            name TEXT NOT NULL,
-            course TEXT,
-            password TEXT,
-            device_id TEXT UNIQUE
-        );""")
+            cursor.execute("""
+            CREATE TABLE students (
+                id SERIAL PRIMARY KEY,
+                enrollment_number TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                course TEXT,
+                password TEXT,
+                device_id TEXT UNIQUE
+            );""")
 
-        cursor.execute("""
-        CREATE TABLE attendance_sessions (
-            id SERIAL PRIMARY KEY,
-            session_date DATE NOT NULL,
-            start_time TIMESTAMPTZ NOT NULL,
-            end_time TIMESTAMPTZ NOT NULL,
-            admin_lat DOUBLE PRECISION NOT NULL,
-            admin_lon DOUBLE PRECISION NOT NULL
-        );""")
-        
-        cursor.execute("""
-        CREATE TABLE attendance_records (
-            id SERIAL PRIMARY KEY,
-            student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-            session_id INTEGER NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
-            status TEXT NOT NULL CHECK(status IN ('Present', 'Absent')),
-            marked_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        );""")
-        
-        cursor.execute("""
-        CREATE TABLE reregistration_requests (
-            id SERIAL PRIMARY KEY,
-            student_id INTEGER NOT NULL UNIQUE REFERENCES students(id) ON DELETE CASCADE,
-            request_date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-            status TEXT DEFAULT 'Pending'
-        );""")
-        
-        print("Tables created successfully.")
-        
-        # Insert default admin user
-        cursor.execute("INSERT INTO admins (username, password) VALUES (%s, %s)", ('admin', 'password'))
-        print("Default admin created (username: admin, password: password)")
-        
-        # Insert student data
-        # executemany is efficient for inserting multiple rows
-        psycopg2.extras.execute_values(
-            cursor,
-            "INSERT INTO students (enrollment_number, name, course) VALUES %s",
-            STUDENT_DATA
-        )
-        print(f"{len(STUDENT_DATA)} students added to the database.")
+            cursor.execute("""
+            CREATE TABLE attendance_sessions (
+                id SERIAL PRIMARY KEY,
+                session_date DATE NOT NULL,
+                start_time TIMESTAMPTZ NOT NULL,
+                end_time TIMESTAMPTZ NOT NULL,
+                admin_lat DOUBLE PRECISION NOT NULL,
+                admin_lon DOUBLE PRECISION NOT NULL
+            );""")
+            
+            cursor.execute("""
+            CREATE TABLE attendance_records (
+                id SERIAL PRIMARY KEY,
+                student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+                session_id INTEGER NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+                status TEXT NOT NULL CHECK(status IN ('Present', 'Absent')),
+                marked_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );""")
+            
+            cursor.execute("""
+            CREATE TABLE reregistration_requests (
+                id SERIAL PRIMARY KEY,
+                student_id INTEGER NOT NULL UNIQUE REFERENCES students(id) ON DELETE CASCADE,
+                request_date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'Pending'
+            );""")
+            
+            print("Tables created successfully.")
+            
+            # Insert default admin user with a HASHED password
+            hashed_password = generate_password_hash('password')
+            cursor.execute("INSERT INTO admins (username, password) VALUES (%s, %s)", ('admin', hashed_password))
+            print("Default admin created (username: admin, password: password)")
+            
+            # Insert student data
+            execute_values(
+                cursor,
+                "INSERT INTO students (enrollment_number, name, course) VALUES %s",
+                STUDENT_DATA
+            )
+            print(f"{len(STUDENT_DATA)} students added to the database.")
 
-        conn.commit()
-    conn.close()
     print("Database setup complete.")
 
 if __name__ == '__main__':
