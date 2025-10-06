@@ -6,25 +6,39 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for, s
 from geopy.distance import geodesic
 import io
 import csv
-# Import WhiteNoise
 from whitenoise import WhiteNoise
+from flask_sqlalchemy import SQLAlchemy
+from flask_session import Session
 
 app = Flask(__name__)
-# Add this line to wrap your app with WhiteNoise
 app.wsgi_app = WhiteNoise(app.wsgi_app, root='static/')
 
+# --- Session and Database Configuration ---
 
-# These settings are important for deployment (e.g., on Render)
+# Get the database URL from the environment variable
+database_url = os.getenv('DATABASE_URL')
+
+# **FIX:** Heroku/Render/Supabase use 'postgresql://', but SQLAlchemy needs 'postgresql+psycopg2://'
+# This code replaces the scheme to ensure compatibility.
+if database_url and database_url.startswith("postgresql://"):
+    database_url = database_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'a-default-secret-key-for-development')
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SESSION_TYPE'] = 'sqlalchemy'
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'None'
 
-# It's better to get this from an environment variable for security
-app.secret_key = os.getenv('FLASK_SECRET_KEY', 'a-default-secret-key-for-development')
-DATABASE_URL = os.getenv('DATABASE_URL')
+db = SQLAlchemy(app)
+app.config['SESSION_SQLALCHEMY'] = db
+sess = Session(app)
 
+# --- Database Connection Helper (for raw queries) ---
+# We still use the original DATABASE_URL for direct psycopg2 connections
+DATABASE_URL_ORIGINAL = os.getenv('DATABASE_URL')
 def get_db_connection():
-    """Establishes a connection to the PostgreSQL database."""
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
+    conn = psycopg2.connect(DATABASE_URL_ORIGINAL, cursor_factory=DictCursor)
     return conn
 
 # --- Authentication & Page Routes ---
@@ -270,7 +284,8 @@ def generate_csv():
     if not is_admin(): return jsonify({'success': False, 'message': 'Unauthorized'}), 401
     
     conn = get_db_connection()
-    with conn.cursor() as cursor:
+    with conn.cursor()...
+with conn.cursor() as cursor:
         cursor.execute('SELECT COUNT(DISTINCT session_date) FROM attendance_sessions')
         total_working_days = cursor.fetchone()[0] or 0
         
@@ -386,6 +401,7 @@ def request_reregistration():
         conn.commit()
     conn.close()
     return jsonify({'success': True, 'message': 'Re-registration request sent to admin.'})
+
 
 if __name__ == '__main__':
     # Use environment variables for host and port for flexibility in deployment
