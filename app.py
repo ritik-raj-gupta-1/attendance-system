@@ -9,18 +9,21 @@ import csv
 
 app = Flask(__name__)
 
-# MODIFIED: Add these two lines for secure session cookies in production
+# These settings are important for deployment (e.g., on Render)
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'None'
 
-app.secret_key = 'your_very_secret_key_change_this'
+# It's better to get this from an environment variable for security
+app.secret_key = os.getenv('FLASK_SECRET_KEY', 'a-default-secret-key-for-development')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 def get_db_connection():
+    """Establishes a connection to the PostgreSQL database."""
     conn = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
     return conn
 
-# --- Main Routes ---
+# --- Authentication & Page Routes ---
+
 @app.route('/')
 def index():
     if 'user_type' in session and session['user_type'] == 'student':
@@ -50,7 +53,8 @@ def logout():
     session.clear()
     return redirect(url_for('index'))
 
-# --- API Routes ---
+# --- Shared & Login API Routes ---
+
 @app.route('/api/student_login', methods=['POST'])
 def student_login():
     data = request.json
@@ -68,7 +72,7 @@ def student_login():
         session['user_type'] = 'student'
         return jsonify({'success': True, 'redirect_url': url_for('student_dashboard')})
     
-    return jsonify({'success': False, 'message': 'Invalid credentials, not registered, or device not recognized.'})
+    return jsonify({'success': False, 'message': 'Invalid credentials or not registered.'})
 
 @app.route('/api/admin_login', methods=['POST'])
 def admin_login():
@@ -131,11 +135,15 @@ def get_active_session():
     else:
         return jsonify({'is_active': False})
 
-# --- ADMIN API ---
+# --- ADMIN API Routes ---
+
+def is_admin():
+    return 'user_type' in session and session['user_type'] == 'admin'
+
 @app.route('/api/admin/start_session', methods=['POST'])
 def start_session():
-    if 'user_type' not in session or session['user_type'] != 'admin':
-        return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    if not is_admin(): return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    
     conn = get_db_connection()
     with conn.cursor() as cursor:
         now_utc = datetime.now(timezone.utc)
@@ -166,14 +174,12 @@ def start_session():
 
 @app.route('/api/admin/end_session', methods=['POST'])
 def end_session():
-    if 'user_type' not in session or session['user_type'] != 'admin':
-        return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    if not is_admin(): return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    
     conn = get_db_connection()
     with conn.cursor() as cursor:
         now_utc = datetime.now(timezone.utc)
-        cursor.execute(
-            "SELECT id FROM attendance_sessions WHERE %s BETWEEN start_time AND end_time", (now_utc,)
-        )
+        cursor.execute("SELECT id FROM attendance_sessions WHERE %s BETWEEN start_time AND end_time", (now_utc,))
         active_session = cursor.fetchone()
         if active_session:
             cursor.execute("UPDATE attendance_sessions SET end_time = %s WHERE id = %s", (now_utc, active_session['id']))
@@ -185,12 +191,12 @@ def end_session():
 
 @app.route('/api/admin/get_today_attendance')
 def get_today_attendance():
-    if 'user_type' not in session or session['user_type'] != 'admin':
-        return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    if not is_admin(): return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+
     conn = get_db_connection()
     with conn.cursor() as cursor:
         cursor.execute(
-            "SELECT * FROM attendance_sessions WHERE session_date = %s ORDER BY start_time DESC LIMIT 1",
+            "SELECT id FROM attendance_sessions WHERE session_date = %s ORDER BY start_time DESC LIMIT 1",
             (datetime.now(timezone.utc).date(),)
         )
         latest_session = cursor.fetchone()
@@ -207,14 +213,61 @@ def get_today_attendance():
     conn.close()
     return jsonify([dict(row) for row in attendance_data])
 
-@app.route('/api/admin/generate_csv', methods=['POST'])
+@app.route('/api/admin/update_attendance', methods=['POST'])
+def update_attendance():
+    if not is_admin(): return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    
+    data = request.json
+    record_id, new_status = data.get('record_id'), data.get('status')
+    conn = get_db_connection()
+    with conn.cursor() as cursor:
+        cursor.execute("UPDATE attendance_records SET status = %s WHERE id = %s", (new_status, record_id))
+        conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Status updated.'})
+
+@app.route('/api/admin/get_requests')
+def get_requests():
+    if not is_admin(): return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    
+    conn = get_db_connection()
+    with conn.cursor() as cursor:
+        cursor.execute('''
+            SELECT r.id, s.name, s.enrollment_number FROM reregistration_requests r
+            JOIN students s ON r.student_id = s.id
+            WHERE r.status = 'Pending' ORDER BY r.request_date
+        ''')
+        requests = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return jsonify(requests)
+
+@app.route('/api/admin/approve_request', methods=['POST'])
+def approve_request():
+    if not is_admin(): return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    
+    request_id = request.json.get('request_id')
+    conn = get_db_connection()
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT student_id FROM reregistration_requests WHERE id = %s", (request_id,))
+        req = cursor.fetchone()
+        if req:
+            student_id = req['student_id']
+            cursor.execute("UPDATE students SET password = NULL, device_id = NULL WHERE id = %s", (student_id,))
+            cursor.execute("DELETE FROM reregistration_requests WHERE id = %s", (request_id,))
+            conn.commit()
+            conn.close()
+            return jsonify({'success': True, 'message': 'Request approved.'})
+    conn.close()
+    return jsonify({'success': False, 'message': 'Request not found.'})
+
+@app.route('/api/admin/generate_csv')
 def generate_csv():
-    if 'user_type' not in session or session['user_type'] != 'admin':
-        return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    if not is_admin(): return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    
     conn = get_db_connection()
     with conn.cursor() as cursor:
         cursor.execute('SELECT COUNT(DISTINCT session_date) FROM attendance_sessions')
-        total_working_days = cursor.fetchone()[0] or 1
+        total_working_days = cursor.fetchone()[0] or 0
         
         cursor.execute('SELECT id, name, enrollment_number FROM students ORDER BY name')
         students = cursor.fetchall()
@@ -222,12 +275,11 @@ def generate_csv():
         report_data = []
         for student in students:
             cursor.execute('''
-                SELECT COUNT(DISTINCT s.session_date)
-                FROM attendance_records AS r
+                SELECT COUNT(DISTINCT s.session_date) FROM attendance_records AS r
                 JOIN attendance_sessions AS s ON r.session_id = s.id
                 WHERE r.student_id = %s AND r.status = 'Present'
             ''', (student['id'],))
-            days_present = cursor.fetchone()[0]
+            days_present = cursor.fetchone()[0] or 0
             report_data.append({
                 'name': student['name'],
                 'enrollment_number': student['enrollment_number'],
@@ -242,25 +294,33 @@ def generate_csv():
         percentage = (row['days_present'] / total_working_days) * 100 if total_working_days > 0 else 0
         writer.writerow([row['name'], row['enrollment_number'], row['days_present'], total_working_days, f"{percentage:.2f}%"])
     output.seek(0)
-    return Response(output, mimetype="text/csv", headers={"Content-Disposition":"attachment;filename=attendance_report.csv"})
+    
+    return Response(
+        output,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment;filename=attendance_report.csv"}
+    )
 
-# --- STUDENT API ---
+# --- STUDENT API Routes ---
+
+def is_student():
+    return 'user_type' in session and session['user_type'] == 'student'
+
 @app.route('/api/student/get_status')
 def get_student_status():
-    if 'user_type' not in session or session['user_type'] != 'student':
-        return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    if not is_student(): return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    
     conn = get_db_connection()
     with conn.cursor() as cursor:
         cursor.execute('SELECT COUNT(DISTINCT session_date) FROM attendance_sessions')
-        total_working_days = cursor.fetchone()[0]
+        total_working_days = cursor.fetchone()[0] or 0
 
         cursor.execute('''
-            SELECT COUNT(DISTINCT s.session_date)
-            FROM attendance_records AS r
+            SELECT COUNT(DISTINCT s.session_date) FROM attendance_records AS r
             JOIN attendance_sessions AS s ON r.session_id = s.id
             WHERE r.student_id = %s AND r.status = 'Present'
         ''', (session['user_id'],))
-        days_present = cursor.fetchone()[0]
+        days_present = cursor.fetchone()[0] or 0
         
         cursor.execute("SELECT id FROM attendance_sessions WHERE session_date = %s ORDER BY start_time DESC LIMIT 1", (datetime.now(timezone.utc).date(),))
         latest_session_today = cursor.fetchone()
@@ -277,8 +337,8 @@ def get_student_status():
 
 @app.route('/api/student/mark_attendance', methods=['POST'])
 def mark_attendance():
-    if 'user_type' not in session or session['user_type'] != 'student':
-        return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    if not is_student(): return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    
     data = request.json
     student_lat, student_lon, device_id = data.get('lat'), data.get('lon'), data.get('device_id')
     conn = get_db_connection()
@@ -309,14 +369,19 @@ def mark_attendance():
 
 @app.route('/api/student/request_reregistration', methods=['POST'])
 def request_reregistration():
-    if 'user_type' not in session or session['user_type'] != 'student':
-        return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    if not is_student(): return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    
     conn = get_db_connection()
     with conn.cursor() as cursor:
-        cursor.execute('INSERT INTO reregistration_requests (student_id) VALUES (%s) ON CONFLICT (student_id) DO NOTHING', (session['user_id'],))
+        # Using ON CONFLICT ensures a student can't have multiple pending requests
+        cursor.execute('''
+            INSERT INTO reregistration_requests (student_id, status) VALUES (%s, 'Pending')
+            ON CONFLICT (student_id) DO UPDATE SET status = 'Pending', request_date = NOW()
+        ''', (session['user_id'],))
         conn.commit()
     conn.close()
     return jsonify({'success': True, 'message': 'Re-registration request sent to admin.'})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    # Use environment variables for host and port for flexibility in deployment
+    app.run(host=os.environ.get('HOST', '0.0.0.0'), port=int(os.environ.get('PORT', 5000)))

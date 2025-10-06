@@ -1,7 +1,12 @@
-import sqlite3
 import os
+import psycopg2
+from psycopg2.extras import DictCursor
 
-DB_FILE = "attendance.db"
+# IMPORTANT: Make sure the DATABASE_URL environment variable is set.
+DATABASE_URL = os.getenv('DATABASE_URL')
+if not DATABASE_URL:
+    raise ValueError("No DATABASE_URL set for Flask application")
+
 STUDENT_DATA = [
     ('Y24120001', 'ANSHUL TAMRAKAR', 'BA'), ('Y24120002', 'KHUSHVEER SINGH SURYAVANSHI', 'BA'),
     ('Y24120003', 'SHREYASHI JAIN', 'BA'), ('Y24120004', 'AAKASH ROHIT', 'BA'),
@@ -80,70 +85,82 @@ STUDENT_DATA = [
     ('Y24130009', 'SHOBHNA YADAV', 'BA'), ('Y24130058', 'MUSKAN BANO', 'BA'),
 ]
 
-def create_connection(db_file):
-    conn = None
-    try:
-        conn = sqlite3.connect(db_file)
-        return conn
-    except sqlite3.Error as e:
-        print(e)
-    return conn
-
-def create_table(conn, create_table_sql):
-    try:
-        c = conn.cursor()
-        c.execute(create_table_sql)
-    except sqlite3.Error as e:
-        print(e)
-
 def setup_database():
-    if os.path.exists(DB_FILE):
-        os.remove(DB_FILE)
-        print("Old database removed.")
+    """Connects to the PostgreSQL database and sets up all tables."""
+    conn = psycopg2.connect(DATABASE_URL)
+    with conn.cursor() as cursor:
+        print("Dropping existing tables...")
+        # Drop tables in reverse order of creation due to foreign key constraints
+        cursor.execute("DROP TABLE IF EXISTS reregistration_requests CASCADE;")
+        cursor.execute("DROP TABLE IF EXISTS attendance_records CASCADE;")
+        cursor.execute("DROP TABLE IF EXISTS attendance_sessions CASCADE;")
+        cursor.execute("DROP TABLE IF EXISTS students CASCADE;")
+        cursor.execute("DROP TABLE IF EXISTS admins CASCADE;")
 
-    sql_create_students_table = """
-    CREATE TABLE IF NOT EXISTS students (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, enrollment_number TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
-        course TEXT, password TEXT, device_id TEXT UNIQUE
-    );"""
-    
-    sql_create_attendance_sessions_table = """
-    CREATE TABLE IF NOT EXISTS attendance_sessions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, session_date DATE NOT NULL, start_time DATETIME NOT NULL,
-        end_time DATETIME NOT NULL, admin_lat REAL NOT NULL, admin_lon REAL NOT NULL
-    );"""
+        print("Creating tables...")
+        # Using TIMESTAMPTZ for timezone-aware timestamps, recommended for web apps
+        cursor.execute("""
+        CREATE TABLE admins (
+            id SERIAL PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL
+        );""")
 
-    sql_create_admins_table = "CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE, password TEXT NOT NULL);"
-    sql_create_attendance_records_table = """
-    CREATE TABLE IF NOT EXISTS attendance_records (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER NOT NULL, session_id INTEGER NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('Present', 'Absent')), marked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (student_id) REFERENCES students (id), FOREIGN KEY (session_id) REFERENCES attendance_sessions (id)
-    );"""
-    sql_create_reregistration_requests_table = """
-    CREATE TABLE IF NOT EXISTS reregistration_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER NOT NULL UNIQUE, request_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-        status TEXT DEFAULT 'Pending', FOREIGN KEY (student_id) REFERENCES students (id)
-    );"""
+        cursor.execute("""
+        CREATE TABLE students (
+            id SERIAL PRIMARY KEY,
+            enrollment_number TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            course TEXT,
+            password TEXT,
+            device_id TEXT UNIQUE
+        );""")
 
-    conn = create_connection(DB_FILE)
-    if conn is not None:
-        create_table(conn, sql_create_admins_table)
-        create_table(conn, sql_create_students_table)
-        create_table(conn, sql_create_attendance_sessions_table)
-        create_table(conn, sql_create_attendance_records_table)
-        create_table(conn, sql_create_reregistration_requests_table)
+        cursor.execute("""
+        CREATE TABLE attendance_sessions (
+            id SERIAL PRIMARY KEY,
+            session_date DATE NOT NULL,
+            start_time TIMESTAMPTZ NOT NULL,
+            end_time TIMESTAMPTZ NOT NULL,
+            admin_lat DOUBLE PRECISION NOT NULL,
+            admin_lon DOUBLE PRECISION NOT NULL
+        );""")
+        
+        cursor.execute("""
+        CREATE TABLE attendance_records (
+            id SERIAL PRIMARY KEY,
+            student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+            session_id INTEGER NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+            status TEXT NOT NULL CHECK(status IN ('Present', 'Absent')),
+            marked_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );""")
+        
+        cursor.execute("""
+        CREATE TABLE reregistration_requests (
+            id SERIAL PRIMARY KEY,
+            student_id INTEGER NOT NULL UNIQUE REFERENCES students(id) ON DELETE CASCADE,
+            request_date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            status TEXT DEFAULT 'Pending'
+        );""")
+        
         print("Tables created successfully.")
         
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO admins (username, password) VALUES (?, ?)", ('admin', 'password'))
+        # Insert default admin user
+        cursor.execute("INSERT INTO admins (username, password) VALUES (%s, %s)", ('admin', 'password'))
         print("Default admin created (username: admin, password: password)")
-        cursor.executemany("INSERT INTO students (enrollment_number, name, course) VALUES (?, ?, ?)", STUDENT_DATA)
+        
+        # Insert student data
+        # executemany is efficient for inserting multiple rows
+        psycopg2.extras.execute_values(
+            cursor,
+            "INSERT INTO students (enrollment_number, name, course) VALUES %s",
+            STUDENT_DATA
+        )
         print(f"{len(STUDENT_DATA)} students added to the database.")
+
         conn.commit()
-        conn.close()
-    else:
-        print("Error! cannot create the database connection.")
+    conn.close()
+    print("Database setup complete.")
 
 if __name__ == '__main__':
     setup_database()
